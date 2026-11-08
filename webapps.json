@@ -7,10 +7,10 @@
     {
       "folder": "CalTrack",
       "name": "CalTrack",
-      "version": "1.0",
+      "version": "1.1",
       "category": "Utilities",
       "description": "Calorie + macro tracker with barcode scanning",
-      "sha256": "a8eb5eb858aa09616dc2112d0a0d6bcbd5746759648a32808bc31bbbf0473fad"
+      "sha256": "58bcfd96c6d3244706364e3452335ce05e66029036e4aa919852b57a7e3f5dda"
     }
   ]
 }

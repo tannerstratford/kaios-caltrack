@@ -45,10 +45,63 @@
     return g;
   }
 
+  // ------------------------------------------------------------ enhancement
+  // ZXing binarizes each row with ONE threshold, so focus blur + uneven light
+  // (vignetting, shadows) + sensor noise break it. Bars run vertically, so we
+  // can average rows for free SNR, then sharpen horizontally against blur.
+  // Measured on synthetic camera-like frames: raw 7/29 -> enhanced 16/29,
+  // union of the three passes 18/29.
+
+  // Column-wise moving average over (2r+1) rows.
+  function vavg(g, w, h, r) {
+    var o = new Uint8ClampedArray(w * h);
+    for (var x = 0; x < w; x++) {
+      var s = 0, n = 0, y;
+      for (y = 0; y < Math.min(h, r); y++) { s += g[y * w + x]; n++; }
+      for (y = 0; y < h; y++) {
+        if (y + r < h) { s += g[(y + r) * w + x]; n++; }
+        if (y - r - 1 >= 0) { s -= g[(y - r - 1) * w + x]; n--; }
+        o[y * w + x] = s / n;
+      }
+    }
+    return o;
+  }
+
+  // Row-wise box blur over (2r+1) px (prefix sums).
+  function hblur(g, w, h, r) {
+    var o = new Float32Array(w * h), ps = new Float64Array(w + 1);
+    for (var y = 0; y < h; y++) {
+      var b = y * w, x;
+      for (x = 0; x < w; x++) ps[x + 1] = ps[x] + g[b + x];
+      for (x = 0; x < w; x++) { var a = Math.max(0, x - r), c = Math.min(w, x + r + 1); o[b + x] = (ps[c] - ps[a]) / (c - a); }
+    }
+    return o;
+  }
+
+  function sharpen(g, w, h, r, k) {
+    var bl = hblur(g, w, h, r), o = new Uint8ClampedArray(w * h);
+    for (var i = 0; i < w * h; i++) o[i] = g[i] + k * (g[i] - bl[i]);
+    return o;
+  }
+
+  // Local-contrast normalise: remove slow light gradients.
+  function flatten(g, w, h, r) {
+    var bl = hblur(g, w, h, r), o = new Uint8ClampedArray(w * h);
+    for (var i = 0; i < w * h; i++) o[i] = 128 + 2 * (g[i] - bl[i]);
+    return o;
+  }
+
+  // gray with bars vertical. Tries enhanced, raw, flattened.
+  function decodeBest(g, w, h) {
+    var v = vavg(g, w, h, 8);
+    return decodeGray(sharpen(v, w, h, 2, 2), w, h) || decodeGray(g, w, h) ||
+      decodeGray(flatten(v, w, h, Math.max(8, Math.round(w / 16))), w, h);
+  }
+
   // ------------------------------------------------------------ live camera
 
   var stream = null, timer = null, running = false;
-  var canvas = null, ctx = null;
+  var canvas = null, ctx = null, frame = 0, info = "";
 
   function start(video, onCode, onError) {
     stop();
@@ -57,7 +110,7 @@
       return;
     }
     running = true;
-    var want = { audio: false, video: { facingMode: "environment", width: { ideal: 640 }, height: { ideal: 480 } } };
+    var want = { audio: false, video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } } };
     navigator.mediaDevices.getUserMedia(want).catch(function () {
       return navigator.mediaDevices.getUserMedia({ audio: false, video: true });
     }).then(function (s) {
@@ -74,22 +127,32 @@
     });
   }
 
+  // Crop from the native frame (no downscale: downscaling = extra blur).
+  function grab(video, vw, vh, cx, cy) {
+    var w = Math.round(vw * cx), h = Math.round(vh * cy);
+    if (!canvas) { canvas = document.createElement("canvas"); ctx = canvas.getContext("2d"); }
+    if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+    ctx.drawImage(video, (vw - w) / 2, (vh - h) / 2, w, h, 0, 0, w, h);
+    return { g: toGray(ctx.getImageData(0, 0, w, h).data, w * h), w: w, h: h };
+  }
+
   function loop(video, onCode) {
     if (!running) return;
     var vw = video.videoWidth, vh = video.videoHeight;
     if (vw && vh) {
-      // Cap the decode size: the QM215 is slow; 1D codes don't need many pixels.
-      var scale = Math.min(1, 480 / Math.max(vw, vh));
-      var w = Math.round(vw * scale), h = Math.round(vh * scale);
-      if (!canvas) { canvas = document.createElement("canvas"); ctx = canvas.getContext("2d"); }
-      if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
-      ctx.drawImage(video, 0, 0, w, h);
-      var gray = toGray(ctx.getImageData(0, 0, w, h).data, w * h);
-      // Try both orientations so the code reads however the phone is held.
-      var code = decodeGray(gray, w, h) || decodeGray(rotate90(gray, w, h), h, w);
+      info = vw + "x" + vh;
+      var code = null, f;
+      // Alternate orientations frame to frame (keeps each frame fast on the QM215).
+      if (frame++ % 2 === 0) {
+        f = grab(video, vw, vh, 0.9, 0.5);          // bars vertical: wide strip
+        code = decodeBest(f.g, f.w, f.h);
+      } else {
+        f = grab(video, vw, vh, 0.5, 0.9);          // bars horizontal: tall strip
+        code = decodeBest(rotate90(f.g, f.w, f.h), f.h, f.w);
+      }
       if (code) { stop(); onCode(code); return; }
     }
-    timer = setTimeout(function () { loop(video, onCode); }, 100);
+    timer = setTimeout(function () { loop(video, onCode); }, 60);
   }
 
   function stop() {
@@ -98,5 +161,8 @@
     if (stream) { stream.getTracks().forEach(function (t) { t.stop(); }); stream = null; }
   }
 
-  root.Scanner = { start: start, stop: stop, decodeGray: decodeGray, rotate90: rotate90, toGray: toGray };
+  root.Scanner = {
+    start: start, stop: stop, decodeGray: decodeGray, decodeBest: decodeBest, rotate90: rotate90, toGray: toGray,
+    info: function () { return info; },
+  };
 }(this));

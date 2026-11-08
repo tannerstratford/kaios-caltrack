@@ -398,7 +398,7 @@ var ScanView = {
   render: function (el) {
     softkeys("Cancel", "", "Type #");
     el.innerHTML = '<div class="scan"><video id="cam" autoplay muted></video><div class="aim"></div></div>' +
-      '<div class="hint">Hold 10–20 cm away, bars across the red line. Either orientation works.</div>';
+      '<div class="hint">Good light. Hold steady ~15–25 cm away (too close = blurry), bars across the red line.<br><span id="res"></span></div>';
     status("Starting camera…");
     Scanner.start(document.getElementById("cam"), function (code) {
       try { navigator.vibrate && navigator.vibrate(80); } catch (e) {}
@@ -407,6 +407,11 @@ var ScanView = {
       status("Camera failed: " + err.message + " — press Type #", true);
     });
     setTimeout(function () { if (topView() === ScanView && !$("status").classList.contains("err")) status("Point at a barcode"); }, 1200);
+    var resTick = setInterval(function () {
+      var r = document.getElementById("res");
+      if (!r || topView() !== ScanView) return clearInterval(resTick);
+      if (Scanner.info()) r.textContent = "camera " + Scanner.info();
+    }, 1000);
   },
   leave: function () { Scanner.stop(); },
   key: function (e) {
@@ -535,7 +540,8 @@ function HistoryView() {
 
 function DiagView() {
   var lines = [
-    "version: " + "1.0",
+    "version: " + "1.1",
+    "last camera: " + (Scanner.info() || "not used yet"),
     "getUserMedia: " + !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia),
     "ZXing: " + !!window.ZXing,
     "device storage: " + Backup.available(),
