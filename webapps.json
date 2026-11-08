@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "categories": [
+    "Utilities"
+  ],
+  "apps": [
+    {
+      "folder": "CalTrack",
+      "name": "CalTrack",
+      "version": "1.0",
+      "category": "Utilities",
+      "description": "Calorie + macro tracker with barcode scanning",
+      "sha256": "a8eb5eb858aa09616dc2112d0a0d6bcbd5746759648a32808bc31bbbf0473fad"
+    }
+  ]
+}

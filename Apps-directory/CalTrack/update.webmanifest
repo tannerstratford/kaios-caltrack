@@ -1,0 +1,19 @@
+{
+  "name": "CalTrack",
+  "version": "1.0",
+  "package_path": "https://tannerstratford.github.io/kaios-caltrack/Apps-directory/CalTrack/application.zip",
+  "packaged_size": 131746,
+  "size": 131746,
+  "type": "web",
+  "b2g_features": {
+    "version": "1.0",
+    "origin": "caltrack",
+    "permissions": {
+      "camera": {},
+      "systemXHR": {},
+      "device-storage:sdcard": {
+        "access": "readwrite"
+      }
+    }
+  }
+}
