@@ -44,5 +44,12 @@
     });
   }
 
-  root.Backup = { save: save, restore: restore, available: function () { return !!storage(); }, NAME: NAME };
+  // Write any blob under a fresh name (used for scanner frame captures).
+  function saveFile(name, blob) {
+    var ds = storage();
+    if (!ds) return Promise.reject(new Error("no device storage"));
+    return req(ds.addNamed(blob, name)).then(function (path) { return path || name; });
+  }
+
+  root.Backup = { save: save, restore: restore, saveFile: saveFile, available: function () { return !!storage(); }, NAME: NAME };
 }(this));

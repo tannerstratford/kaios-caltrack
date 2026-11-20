@@ -79,3 +79,10 @@ i.c { background:var(--c); } i.p { background:var(--p); } i.f { background:var(-
 #softkeys { flex:none; display:flex; background:#16181d; border-top:1px solid var(--line); font-size:12px; font-weight:700; }
 #softkeys span { flex:1; padding:6px 6px; text-align:center; }
 #sk-left { text-align:left; } #sk-right { text-align:right; } #sk-center { color:var(--accent); }
+.numin { width:100%; min-height:33px; padding:7px 8px; font-size:15px; border:1px solid var(--line); border-radius:6px;
+  background:#04121a; color:var(--text); outline:none; white-space:nowrap; overflow:hidden; }
+.form .numin, .field.sel .numin { border-color:var(--accent); }
+.numin:empty::before { content:attr(data-ph); color:var(--muted); }
+.numin:focus::after { content:""; display:inline-block; width:2px; height:16px; margin-left:1px; vertical-align:-3px;
+  background:var(--accent); animation:blink 1s steps(1) infinite; }
+@keyframes blink { 50% { opacity:0; } }

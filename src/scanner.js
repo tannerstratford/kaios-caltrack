@@ -1,6 +1,11 @@
-// Scanner: rear camera via getUserMedia -> canvas frames -> ZXing 1D decode
-// (EAN-13 / UPC-A / EAN-8 / UPC-E). No DOM besides the <video> it is handed.
-// decodeGray() is pure so it can be tested off-device.
+// Scanner: rear camera via getUserMedia -> canvas frames -> two decoders:
+//   - EAN (ean.js): model-fitting EAN-13/UPC-A decoder that copes with blur
+//     and low resolution (most reads on this phone's camera).
+//   - ZXing: EAN-8 / UPC-E, and sharp frames.
+// A code is only accepted once it has 2 votes from recent frames (either
+// decoder; both agreeing on one frame counts as 2), because a single blurry
+// frame can occasionally decode to a wrong but checksum-valid number.
+// No DOM besides the <video> it is handed. decodeGray() is pure.
 (function (root) {
   "use strict";
 
@@ -101,7 +106,8 @@
   // ------------------------------------------------------------ live camera
 
   var stream = null, timer = null, running = false;
-  var canvas = null, ctx = null, frame = 0, info = "";
+  var canvas = null, ctx = null, frame = 0, info = "", last = null, votes = [], stats = { frames: 0, ms: 0 };
+  var VOTE_FRAMES = 8;
 
   function start(video, onCode, onError) {
     stop();
@@ -109,7 +115,7 @@
       onError(new Error("camera API missing (getUserMedia)"));
       return;
     }
-    running = true;
+    running = true; votes = []; frame = 0;
     var want = { audio: false, video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } } };
     navigator.mediaDevices.getUserMedia(want).catch(function () {
       return navigator.mediaDevices.getUserMedia({ audio: false, video: true });
@@ -130,10 +136,36 @@
   // Crop from the native frame (no downscale: downscaling = extra blur).
   function grab(video, vw, vh, cx, cy) {
     var w = Math.round(vw * cx), h = Math.round(vh * cy);
-    if (!canvas) { canvas = document.createElement("canvas"); ctx = canvas.getContext("2d"); }
+    if (!canvas) { canvas = document.createElement("canvas"); ctx = canvas.getContext("2d", { willReadFrequently: true }); }
     if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
     ctx.drawImage(video, (vw - w) / 2, (vh - h) / 2, w, h, 0, 0, w, h);
     return { g: toGray(ctx.getImageData(0, 0, w, h).data, w * h), w: w, h: h };
+  }
+
+  function canon(code) { return code && code.length === 12 ? "0" + code : code; }
+
+  // Add votes for this frame; returns a code once it has 2 votes in the window.
+  function vote(codes) {
+    votes.push(codes);
+    if (votes.length > VOTE_FRAMES) votes.shift();
+    var n = {};
+    for (var i = 0; i < votes.length; i++) for (var j = 0; j < votes[i].length; j++) {
+      var c = votes[i][j];
+      n[c] = (n[c] || 0) + 1;
+      if (n[c] >= 2) { votes = []; return c; }
+    }
+    return null;
+  }
+
+  // All decoders on one frame (bars vertical). Returns the codes found.
+  function decodeFrame(g, w, h) {
+    var out = [];
+    if (root.EAN) { var r = root.EAN.decodeImage(g, w, h); if (r) out.push(r.text); }
+    // Raw ZXing pass only: its blur-enhanced passes (decodeBest) cost ~40x
+    // more and the EAN decoder now covers blurry frames far better.
+    var z = canon(decodeGray(g, w, h));
+    if (z) out.push(z);
+    return out;
   }
 
   function loop(video, onCode) {
@@ -141,18 +173,30 @@
     var vw = video.videoWidth, vh = video.videoHeight;
     if (vw && vh) {
       info = vw + "x" + vh;
-      var code = null, f;
+      var t0 = Date.now(), f, codes;
       // Alternate orientations frame to frame (keeps each frame fast on the QM215).
       if (frame++ % 2 === 0) {
         f = grab(video, vw, vh, 0.9, 0.5);          // bars vertical: wide strip
-        code = decodeBest(f.g, f.w, f.h);
+        last = f;
+        codes = decodeFrame(f.g, f.w, f.h);
       } else {
         f = grab(video, vw, vh, 0.5, 0.9);          // bars horizontal: tall strip
-        code = decodeBest(rotate90(f.g, f.w, f.h), f.h, f.w);
+        codes = decodeFrame(rotate90(f.g, f.w, f.h), f.h, f.w);
       }
+      stats.frames++; stats.ms += Date.now() - t0;
+      var code = vote(codes);
       if (code) { stop(); onCode(code); return; }
     }
-    timer = setTimeout(function () { loop(video, onCode); }, 60);
+    timer = setTimeout(function () { loop(video, onCode); }, 40);
+  }
+
+  // Last wide strip as a binary PGM (for offline decoder tuning).
+  function lastFramePGM() {
+    if (!last) return null;
+    var head = "P5\n" + last.w + " " + last.h + "\n255\n", buf = new Uint8Array(head.length + last.g.length);
+    for (var i = 0; i < head.length; i++) buf[i] = head.charCodeAt(i);
+    buf.set(last.g, head.length);
+    return new Blob([buf], { type: "image/x-portable-graymap" });
   }
 
   function stop() {
@@ -163,6 +207,8 @@
 
   root.Scanner = {
     start: start, stop: stop, decodeGray: decodeGray, decodeBest: decodeBest, rotate90: rotate90, toGray: toGray,
+    vote: vote, lastFramePGM: lastFramePGM,
     info: function () { return info; },
+    speed: function () { return stats.frames ? Math.round(stats.ms / stats.frames) + " ms/frame" : ""; },
   };
 }(this));

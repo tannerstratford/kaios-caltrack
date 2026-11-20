@@ -177,49 +177,67 @@ function ConfirmView(question, yesLabel, onYes) {
 
 // ---------------------------------------------------------------- inputs
 
-// Numeric fields use type=tel (digit keypad); "*" types the decimal point.
-function wireNumeric(input) {
-  input.addEventListener("keydown", function (e) {
-    if (e.key === "*") {
-      e.preventDefault(); e.stopPropagation();
-      if (input.value.indexOf(".") < 0) {
-        var p = input.selectionStart == null ? input.value.length : input.selectionStart;
-        input.value = input.value.slice(0, p) + "." + input.value.slice(p);
-        try { input.setSelectionRange(p + 1, p + 1); } catch (err) {}
-        input.dispatchEvent(new Event("input"));
-      }
-    }
+// Numeric field that never touches the phone's keyboard app: the KaiOS IME
+// owns "*" inside <input>s, so a decimal point could not be typed reliably.
+// This is a focusable <div> fed from our own keydown handler:
+// 0-9 type digits, * or # types ".", Backspace deletes.
+// It mimics an <input> (value property + "input" events).
+function NumBox(value, placeholder) {
+  var el = document.createElement("div"), v = "";
+  el.className = "numin"; el.tabIndex = -1;
+  if (placeholder) el.setAttribute("data-ph", placeholder);
+  Object.defineProperty(el, "value", {
+    get: function () { return v; },
+    set: function (x) { v = clean(x); el.textContent = v; },
   });
-  input.addEventListener("input", function () {
-    var v = input.value.replace(/[^0-9.]/g, "");
-    var i = v.indexOf(".");
-    if (i >= 0) v = v.slice(0, i + 1) + v.slice(i + 1).replace(/\./g, "");
-    if (v !== input.value) input.value = v;
-  });
+  function clean(x) {
+    x = String(x == null ? "" : x).replace(/[^0-9.]/g, "");
+    var i = x.indexOf(".");
+    return i < 0 ? x : x.slice(0, i + 1) + x.slice(i + 1).replace(/\./g, "");
+  }
+  function change(x) { if (x !== v) { el.value = x; el.dispatchEvent(new Event("input")); } }
+  // Returns true when it used the key.
+  el.numKey = function (e) {
+    var k = e.key;
+    if (/^[0-9]$/.test(k)) { change(v.length < 12 ? (v === "0" ? k : v + k) : v); return true; }
+    if (k === "*" || k === "#" || k === "." || k === ",") { if (v.indexOf(".") < 0) change((v || "0") + "."); return true; }
+    if (k === "Backspace" && v) { change(v.slice(0, -1)); return true; }
+    return false;
+  };
+  el.value = value;
+  return el;
 }
 
 // Single-field prompt. opts: {numeric, preview(value) -> text, okLabel}
 function PromptView(title, hint, value, onSubmit, opts) {
   opts = opts || {};
+  var input = null, fresh = false;
   return {
     title: function () { return title; },
     render: function (el) {
       softkeys("Cancel", opts.okLabel || "OK", "");
-      el.innerHTML = '<div class="form"><p></p><input><div class="preview"></div>' +
+      el.innerHTML = '<div class="form"><p></p><div class="slot"></div><div class="preview"></div>' +
         (opts.numeric ? '<div class="hint">* = decimal point</div>' : "") + "</div>";
       el.querySelector("p").textContent = hint;
-      var input = el.querySelector("input");
+      var slot = el.querySelector(".slot");
+      input = opts.numeric ? NumBox(value) : document.createElement("input");
+      slot.parentNode.replaceChild(input, slot);
+      if (!opts.numeric) input.value = value == null ? "" : value;
       var prev = el.querySelector(".preview");
-      if (opts.numeric) { input.type = "tel"; wireNumeric(input); }
-      input.value = value == null ? "" : value;
       var upd = function () { if (opts.preview) prev.textContent = opts.preview(input.value.trim()); };
       input.addEventListener("input", upd); upd();
+      // Numeric: first digit typed replaces the suggested value (like a selected input).
+      fresh = !!opts.numeric;
       setTimeout(function () { input.focus(); try { input.select(); } catch (e) {} }, 50);
     },
     key: function (e) {
-      var input = document.querySelector(".form input");
       if (e.key === "Enter") return onSubmit(input.value.trim());
       if (e.key === "SoftLeft" || (e.key === "Backspace" && !input.value)) return pop();
+      if (input.numKey) {
+        if (fresh && /^[0-9*#.]$/.test(e.key)) input.value = "";
+        fresh = false;
+        return input.numKey(e) ? undefined : false;
+      }
       return false;
     },
   };
@@ -335,9 +353,9 @@ function FoodForm(food, onSaved) {
       inputs = FIELDS.map(function (f) {
         var row = document.createElement("label"); row.className = "field";
         var lab = document.createElement("span"); lab.textContent = f.label; row.appendChild(lab);
-        var inp = document.createElement("input");
-        if (f.num) { inp.type = "tel"; wireNumeric(inp); } else inp.type = "text";
-        inp.value = data[f.k]; inp.placeholder = f.ph || "";
+        var inp;
+        if (f.num) inp = NumBox(data[f.k], f.ph);
+        else { inp = document.createElement("input"); inp.type = "text"; inp.value = data[f.k]; inp.placeholder = f.ph || ""; }
         inp.addEventListener("input", function () { sync(); calc(); });
         row.appendChild(inp);
         if (f.k === "kcal") { var c = document.createElement("div"); c.id = "calc"; c.className = "calc"; row.appendChild(c); }
@@ -356,8 +374,8 @@ function FoodForm(food, onSaved) {
         case "Enter": if (focus === FIELDS.length - 1) return save(); focusField(focus + 1); return;
         case "SoftRight": return save();
         case "SoftLeft": sync(); return pop();
-        case "Backspace": if (!inp.value) { sync(); return pop(); } return false;
-        default: return false;
+        case "Backspace": if (!inp.value) { sync(); return pop(); } return inp.numKey ? (inp.numKey(e), undefined) : false;
+        default: return inp.numKey && inp.numKey(e) ? undefined : false;
       }
     },
   };
@@ -398,7 +416,7 @@ var ScanView = {
   render: function (el) {
     softkeys("Cancel", "", "Type #");
     el.innerHTML = '<div class="scan"><video id="cam" autoplay muted></video><div class="aim"></div></div>' +
-      '<div class="hint">Good light. Hold steady ~15–25 cm away (too close = blurry), bars across the red line.<br><span id="res"></span></div>';
+      '<div class="hint">Good light. Hold steady ~15–25 cm away (too close = blurry), bars across the red line. 5 = save frame<br><span id="res"></span></div>';
     status("Starting camera…");
     Scanner.start(document.getElementById("cam"), function (code) {
       try { navigator.vibrate && navigator.vibrate(80); } catch (e) {}
@@ -410,7 +428,7 @@ var ScanView = {
     var resTick = setInterval(function () {
       var r = document.getElementById("res");
       if (!r || topView() !== ScanView) return clearInterval(resTick);
-      if (Scanner.info()) r.textContent = "camera " + Scanner.info();
+      if (Scanner.info()) r.textContent = "camera " + Scanner.info() + " · " + Scanner.speed();
     }, 1000);
   },
   leave: function () { Scanner.stop(); },
@@ -418,6 +436,15 @@ var ScanView = {
     switch (e.key) {
       case "SoftLeft": case "Backspace": return pop();
       case "SoftRight": case "#": return replace(BarcodePrompt());
+      case "5": {
+        // Save the current camera strip so misreads can be studied off-device.
+        var blob = Scanner.lastFramePGM();
+        if (!blob) return status("No frame yet", true);
+        Backup.saveFile("caltrack-frame-" + Date.now() + ".pgm", blob)
+          .then(function (p) { status("Saved " + p); })
+          .catch(function (e) { status("Save failed: " + (e.name || e.message || e), true); });
+        return;
+      }
       default: return false;
     }
   },
@@ -540,7 +567,9 @@ function HistoryView() {
 
 function DiagView() {
   var lines = [
-    "version: " + "1.1",
+    "version: " + "1.4",
+    "scan speed: " + (Scanner.speed() || "n/a"),
+    "EAN decoder: " + !!window.EAN,
     "last camera: " + (Scanner.info() || "not used yet"),
     "getUserMedia: " + !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia),
     "ZXing: " + !!window.ZXing,
