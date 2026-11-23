@@ -134,6 +134,29 @@
     saveJSON(LOG_KEY, l);
   }
 
+  // Quick calories: a log entry with no food behind it. data = {kcal, label,
+  // carbs, protein, fat}; macros optional, blank kcal = derived from macros.
+  function quickFields(data) {
+    var c = round1(num(data.carbs)), p = round1(num(data.protein)), f = round1(num(data.fat));
+    var k = String(data.kcal == null ? "" : data.kcal).trim() !== "" ? Math.round(num(data.kcal)) : kcalFromMacros(c, p, f);
+    return { name: String(data.label || "").trim() || "Quick calories", label: String(data.label || "").trim(),
+      servings: 1, kcal: k, carbs: c, protein: p, fat: f };
+  }
+
+  function addQuick(day, data) {
+    var l = log();
+    var e = Object.assign({ id: uid(), foodId: "", quick: true, ts: Date.now() }, quickFields(data));
+    (l[day] = l[day] || []).push(e);
+    saveJSON(LOG_KEY, l);
+    return e;
+  }
+
+  function updateQuick(day, id, data) {
+    var l = log();
+    (l[day] || []).forEach(function (e) { if (e.id === id) Object.assign(e, quickFields(data)); });
+    saveJSON(LOG_KEY, l);
+  }
+
   function deleteEntry(day, id) {
     var l = log();
     l[day] = (l[day] || []).filter(function (e) { return e.id !== id; });
@@ -189,7 +212,7 @@
     canonBarcode: canonBarcode, validBarcode: validBarcode,
     foodList: foodList, getFood: getFood, findByBarcode: findByBarcode,
     saveFood: saveFood, deleteFood: deleteFood, kcalFromMacros: kcalFromMacros,
-    entries: entries, addEntry: addEntry, updateEntry: updateEntry, deleteEntry: deleteEntry, totals: totals,
+    entries: entries, addEntry: addEntry, updateEntry: updateEntry, addQuick: addQuick, updateQuick: updateQuick, deleteEntry: deleteEntry, totals: totals,
     goals: goals, saveGoals: saveGoals, config: config, saveConfig: saveConfig,
     exportAll: exportAll, importAll: importAll,
   };

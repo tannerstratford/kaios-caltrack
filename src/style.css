@@ -86,3 +86,8 @@ i.c { background:var(--c); } i.p { background:var(--p); } i.f { background:var(-
 .numin:focus::after { content:""; display:inline-block; width:2px; height:16px; margin-left:1px; vertical-align:-3px;
   background:var(--accent); animation:blink 1s steps(1) infinite; }
 @keyframes blink { 50% { opacity:0; } }
+
+/* add screen search box — stays pinned while the list scrolls */
+.search { position:sticky; top:-7px; margin:-7px -9px 4px; padding:7px 9px 6px; background:var(--bg); z-index:1; }
+.search input { width:100%; padding:7px 8px; font-size:15px; border:1px solid var(--accent); border-radius:6px;
+  background:#04121a; color:var(--text); }

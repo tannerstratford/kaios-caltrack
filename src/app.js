@@ -1,7 +1,8 @@
 // CalTrack — KaiOS UI. Dashboard of today's calories + carbs/protein/fat,
 // a phone-local food index keyed by barcode, and a camera barcode scanner.
 //   Dashboard: Left softkey = Scan, OK = Add (or edit the selected entry),
-//   Right softkey = Menu, D-pad left/right = previous/next day, up/down = log.
+//   Right softkey = Menu, D-pad left/right = previous/next day, up/down = log,
+//   * = quick calories (no food), # = type a barcode.
 "use strict";
 
 var $ = function (id) { return document.getElementById(id); };
@@ -87,7 +88,7 @@ var DashView = {
 
     html += '<div class="loghead">LOG · ' + plural(list.length, "item") + "</div>";
     if (!list.length) {
-      html += '<div class="hint">Nothing logged. <b>Scan</b> a barcode or press <b>OK</b> to add from your foods.</div>';
+      html += '<div class="hint">Nothing logged. <b>Scan</b> a barcode, press <b>OK</b> to search your foods, or <b>*</b> for quick calories.</div>';
     } else {
       html += '<ul class="list log">';
       list.forEach(function (e, i) {
@@ -116,6 +117,7 @@ var DashView = {
         if (curDay < Store.dayKey()) { curDay = Store.shiftDay(curDay, 1); this.sel = -1; show(); }
         return;
       case "#": return push(BarcodePrompt());
+      case "*": return push(QuickView());
       case "0": curDay = Store.dayKey(); this.sel = -1; show(); return;
       default: return false;
     }
@@ -263,36 +265,198 @@ function ServingsView(food) {
   });
 }
 
-function AddView() {
+// Foods matching every word of q (name, brand or barcode), name-prefix hits first,
+// otherwise most recently used first.
+function matchFoods(q) {
   var foods = Store.foodList();
-  var items = [
-    { label: "Scan barcode", sub: "camera", run: function () { pop(); startScan(); } },
-    { label: "Type barcode", sub: "enter the digits", run: function () { replace(BarcodePrompt()); } },
-    { label: "New food", sub: "no barcode (homemade, etc.)", run: function () { push(FoodForm({}, afterNewFood)); } },
-    { head: true, label: "MY FOODS · " + foods.length },
-  ];
+  var words = q.toLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.length) return foods;
+  var pre = [], rest = [];
   foods.forEach(function (f) {
-    items.push({ label: f.name, sub: foodSub(f), food: f, run: function () { push(ServingsView(f)); } });
+    var hay = (f.name + " " + (f.brand || "") + " " + (f.barcode || "")).toLowerCase();
+    if (!words.every(function (w) { return hay.indexOf(w) >= 0; })) return;
+    (f.name.toLowerCase().indexOf(words[0]) === 0 ? pre : rest).push(f);
   });
-  if (!foods.length) items.push({ head: true, label: "(none yet — scan something)" });
-  return ListView("Add to " + dayTitle(curDay), items, {
-    center: "Select",
-    left: { label: "Options", when: function (it) { return !!it.food; }, run: function (it) { push(FoodOptions(it.food)); } },
-  });
+  return pre.concat(rest);
+}
+
+// Add screen = search box over the food list. Typing filters; if nothing
+// matches, "Create" opens the new-food form with the typed name filled in.
+// Up/Down move the highlight while the box keeps focus for typing.
+function AddView() {
+  var q = "", items = [], s = 0, input = null, ul = null;
+
+  function create() {
+    push(FoodForm({ name: q }, afterNewFood, 1));
+    status("New food — fill in the label info");
+  }
+  function build() {
+    var foods = matchFoods(q);
+    items = [];
+    if (!q) {
+      items.push(
+        { label: "Scan barcode", sub: "camera", run: function () { pop(); startScan(); } },
+        { label: "Quick calories", sub: "no food — calories, optional label/macros", run: function () { replace(QuickView()); } },
+        { label: "Type barcode", sub: "enter the digits", run: function () { replace(BarcodePrompt()); } },
+        { label: "New food", sub: "no barcode (homemade, etc.)", run: function () { push(FoodForm({}, afterNewFood)); } },
+        { head: true, label: "MY FOODS · " + foods.length });
+      if (!foods.length) items.push({ head: true, label: "(none yet — scan something)" });
+    } else if (!foods.length) {
+      items.push({ head: true, label: "NO FOOD MATCHES “" + q + "”" });
+    }
+    foods.forEach(function (f) {
+      items.push({ label: f.name, sub: foodSub(f), food: f, run: function () { push(ServingsView(f)); } });
+    });
+    if (q) items.push({ label: "+ Create “" + q + "”", sub: "new food with this name", create: true, run: create });
+  }
+  function firstSel() { s = 0; while (items[s] && items[s].head) s++; }
+  function paint() {
+    var cur = items[s];
+    softkeys(cur && cur.food ? "Options" : "", cur && cur.create ? "Create" : "Select", "Back");
+    ul.innerHTML = "";
+    items.forEach(function (it, i) {
+      var li = document.createElement("li");
+      li.className = it.head ? "head" : (i === s ? "sel" : "");
+      var nm = document.createElement("span"); nm.className = "nm"; nm.textContent = it.label; li.appendChild(nm);
+      if (it.sub) { var d = document.createElement("div"); d.className = "sub"; d.textContent = it.sub; li.appendChild(d); }
+      ul.appendChild(li);
+    });
+    if (ul.children[s]) ul.children[s].scrollIntoView({ block: "nearest" });
+    if (s === 0 || (items[0] && items[0].head && s <= 1)) $("view").scrollTop = 0;
+  }
+  function move(d) {
+    if (!items.length) return;
+    var i = s;
+    do { i = (i + d + items.length) % items.length; } while (items[i].head && i !== s);
+    s = i; paint();
+  }
+
+  return {
+    title: function () { return "Add to " + dayTitle(curDay); },
+    render: function (el) {
+      // Rebuilt on every show (e.g. coming back from editing a food), query kept.
+      el.innerHTML = '<div class="search"><input type="text" placeholder="Search foods…"></div><ul class="list"></ul>';
+      input = el.querySelector("input"); ul = el.querySelector("ul");
+      input.value = q;
+      build();
+      if (s >= items.length || !items[s] || items[s].head) firstSel();
+      paint();
+      input.addEventListener("input", function () {
+        var nq = input.value.trim();
+        if (nq === q) return;
+        q = nq; build(); firstSel(); paint();
+      });
+      setTimeout(function () {
+        input.focus();
+        try { var L = input.value.length; input.setSelectionRange(L, L); } catch (e) {}
+      }, 50);
+    },
+    key: function (e) {
+      var cur = items[s];
+      switch (e.key) {
+        case "ArrowDown": return move(1);
+        case "ArrowUp": return move(-1);
+        case "Enter": return cur && !cur.head && cur.run && cur.run();
+        case "SoftLeft": if (cur && cur.food) push(FoodOptions(cur.food)); return;
+        case "SoftRight": return pop();
+        case "Backspace": if (!input.value) return pop(); return false;
+        default: return false; // letters etc. go to the search box
+      }
+    },
+  };
 }
 
 function FoodOptions(food) {
   return ListView(food.name, [
     { label: "Log it", run: function () { replace(ServingsView(food)); } },
     { label: "Edit food", sub: foodSub(food), run: function () {
-        replace(FoodForm(food, function (saved) { pop(); replace(AddView()); status("Saved " + saved.name); }));
+        replace(FoodForm(food, function (saved) { pop(); status("Saved " + saved.name); }));
       } },
     { label: "Delete food", sub: "removes it from your index (log history stays)", run: function () {
         replace(ConfirmView("Delete " + food.name + "?", "Yes, delete", function () {
-          Store.deleteFood(food.id); pop(); pop(); push(AddView()); status("Deleted " + food.name);
+          Store.deleteFood(food.id); pop(); status("Deleted " + food.name);
         }));
       } },
   ]);
+}
+
+// Calories not attached to any food (restaurant meal, estimate, etc.).
+// Calories + optional label and macros. OK logs from any field.
+var QUICK_FIELDS = [
+  { k: "kcal", label: "Calories", num: true, ph: "blank = from macros" },
+  { k: "label", label: "Label", ph: "optional, e.g. Restaurant lunch" },
+  { k: "carbs", label: "Carbs (g)", num: true, ph: "optional" },
+  { k: "protein", label: "Protein (g)", num: true, ph: "optional" },
+  { k: "fat", label: "Fat (g)", num: true, ph: "optional" },
+];
+
+function QuickView(entry) {
+  var data = {}, inputs = [], focus = 0;
+  QUICK_FIELDS.forEach(function (f) {
+    var v = entry ? (f.k === "label" ? entry.label || "" : entry[f.k]) : "";
+    data[f.k] = !v && f.k !== "kcal" ? "" : String(v == null ? "" : v);
+  });
+  function sync() { inputs.forEach(function (inp, i) { data[QUICK_FIELDS[i].k] = inp.value; }); }
+  function kcal() {
+    return data.kcal.trim() !== "" ? Math.round(parseFloat(data.kcal) || 0) : Store.kcalFromMacros(data.carbs, data.protein, data.fat);
+  }
+  function calc() {
+    var el = document.getElementById("calc");
+    if (!el) return;
+    var m = Store.kcalFromMacros(data.carbs, data.protein, data.fat);
+    el.textContent = data.kcal.trim() === "" && m ? "= " + m + " kcal from macros" : (m ? "macros ≈ " + m + " kcal" : "");
+  }
+  function focusField(i) {
+    focus = Math.max(0, Math.min(QUICK_FIELDS.length - 1, i));
+    var inp = inputs[focus];
+    inputs.forEach(function (x, j) { x.parentNode.classList.toggle("sel", j === focus); });
+    inp.parentNode.scrollIntoView({ block: "nearest" });
+    inp.focus();
+    try { var L = inp.value.length; inp.setSelectionRange(L, L); } catch (e) {}
+  }
+  function save() {
+    sync();
+    var k = kcal();
+    if (!(k > 0)) { focusField(0); return status("Enter calories (or macros)", true); }
+    if (entry) { Store.updateQuick(curDay, entry.id, data); pop(); status("Updated"); return; }
+    Store.addQuick(curDay, data);
+    DashView.sel = -1;
+    home();
+    status("Added " + (data.label.trim() || "quick calories") + " · " + fmtK(k) + " kcal");
+  }
+  return {
+    title: function () { return entry ? "Edit quick entry" : "Quick calories"; },
+    render: function (el) {
+      softkeys("Cancel", entry ? "Save" : "Log", "");
+      var form = document.createElement("div"); form.className = "fields";
+      inputs = QUICK_FIELDS.map(function (f) {
+        var row = document.createElement("label"); row.className = "field";
+        var lab = document.createElement("span"); lab.textContent = f.label; row.appendChild(lab);
+        var inp;
+        if (f.num) inp = NumBox(data[f.k], f.ph);
+        else { inp = document.createElement("input"); inp.type = "text"; inp.value = data[f.k]; inp.placeholder = f.ph || ""; }
+        inp.addEventListener("input", function () { sync(); calc(); });
+        row.appendChild(inp);
+        if (f.k === "kcal") { var c = document.createElement("div"); c.id = "calc"; c.className = "calc"; row.appendChild(c); }
+        form.appendChild(row);
+        return inp;
+      });
+      el.appendChild(form);
+      calc();
+      setTimeout(function () { focusField(focus); }, 50);
+    },
+    key: function (e) {
+      var inp = inputs[focus];
+      switch (e.key) {
+        case "ArrowDown": focusField(focus + 1); return;
+        case "ArrowUp": focusField(focus - 1); return;
+        case "Enter": return save();
+        case "SoftLeft": return pop();
+        case "Backspace": if (!inp.value) return pop(); return inp.numKey ? (inp.numKey(e), undefined) : false;
+        default: return inp.numKey && inp.numKey(e) ? undefined : false;
+      }
+    },
+  };
 }
 
 function afterNewFood(food) {
@@ -313,9 +477,9 @@ var FIELDS = [
   { k: "barcode", label: "Barcode", num: true, ph: "optional" },
 ];
 
-function FoodForm(food, onSaved) {
+function FoodForm(food, onSaved, startAt) {
   var data = {}; FIELDS.forEach(function (f) { data[f.k] = food[f.k] == null ? "" : String(food[f.k]); });
-  var focus = data.name ? 3 : 0;
+  var focus = startAt != null ? startAt : data.name ? 3 : 0;
   var inputs = [];
   function sync() { inputs.forEach(function (inp, i) { data[FIELDS[i].k] = inp.value; }); }
   function calc() {
@@ -384,6 +548,7 @@ function FoodForm(food, onSaved) {
 // ---------------------------------------------------------------- log entry
 
 function EntryView(entry) {
+  if (entry.quick) return QuickEntryView(entry);
   var food = Store.getFood(entry.foodId);
   return ListView(entry.name, [
     { label: "Servings", right: fmtG(entry.servings), sub: fmtK(entry.kcal * entry.servings) + " kcal · C" +
@@ -402,6 +567,20 @@ function EntryView(entry) {
     { label: "Edit food", sub: food ? foodSub(food) : "deleted", run: function () {
         if (!food) return status("Food was deleted from your index", true);
         replace(FoodForm(food, function (saved) { pop(); status("Saved " + saved.name + " (future logs)"); }));
+      } },
+    { label: "Remove from log", run: function () {
+        Store.deleteEntry(curDay, entry.id); DashView.sel = Math.max(-1, DashView.sel - 1); pop(); status("Removed " + entry.name);
+      } },
+  ]);
+}
+
+function QuickEntryView(entry) {
+  return ListView(entry.name, [
+    { label: "Edit", right: fmtK(entry.kcal * entry.servings),
+      sub: "C" + fmtG(entry.carbs) + " P" + fmtG(entry.protein) + " F" + fmtG(entry.fat) + " · quick entry",
+      run: function () { replace(QuickView(entry)); } },
+    { label: "Log again", sub: "add the same to " + dayTitle(curDay), run: function () {
+        Store.addQuick(curDay, entry); DashView.sel = -1; home(); status("Added " + entry.name + " · " + fmtK(entry.kcal) + " kcal");
       } },
     { label: "Remove from log", run: function () {
         Store.deleteEntry(curDay, entry.id); DashView.sel = Math.max(-1, DashView.sel - 1); pop(); status("Removed " + entry.name);
@@ -500,6 +679,7 @@ function MenuView() {
   return ListView("Menu", [
     { label: "Add food", run: function () { replace(AddView()); } },
     { label: "Scan barcode", run: function () { pop(); startScan(); } },
+    { label: "Quick calories", sub: "add kcal without a food (or press *)", run: function () { replace(QuickView()); } },
     { label: "Jump to today", run: function () { curDay = Store.dayKey(); DashView.sel = -1; pop(); } },
     { head: true, label: "VIEW" },
     { label: "History", sub: "daily totals, last 30 days", run: function () { push(HistoryView()); } },
@@ -567,7 +747,7 @@ function HistoryView() {
 
 function DiagView() {
   var lines = [
-    "version: " + "1.4",
+    "version: " + "1.5",
     "scan speed: " + (Scanner.speed() || "n/a"),
     "EAN decoder: " + !!window.EAN,
     "last camera: " + (Scanner.info() || "not used yet"),
