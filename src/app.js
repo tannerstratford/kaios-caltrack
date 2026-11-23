@@ -385,6 +385,10 @@ function FoodOptions(food) {
 var QUICK_FIELDS = [
   { k: "kcal", label: "Calories", num: true, ph: "blank = from macros" },
   { k: "label", label: "Label", ph: "optional, e.g. Restaurant lunch" },
+  // % of the calories from each macro -> fills in the gram fields below.
+  { k: "pc", label: "Carbs % of calories", num: true, ph: "optional, e.g. 90", pct: "carbs" },
+  { k: "pp", label: "Protein % of calories", num: true, ph: "optional", pct: "protein" },
+  { k: "pf", label: "Fat % of calories", num: true, ph: "optional, e.g. 10", pct: "fat", split: true },
   { k: "carbs", label: "Carbs (g)", num: true, ph: "optional" },
   { k: "protein", label: "Protein (g)", num: true, ph: "optional" },
   { k: "fat", label: "Fat (g)", num: true, ph: "optional" },
@@ -397,6 +401,37 @@ function QuickView(entry) {
     data[f.k] = !v && f.k !== "kcal" ? "" : String(v == null ? "" : v);
   });
   function sync() { inputs.forEach(function (inp, i) { data[QUICK_FIELDS[i].k] = inp.value; }); }
+  // Estimate grams from calories x % split: carbs/protein 4 kcal/g, fat 9.
+  var PCT = QUICK_FIELDS.filter(function (f) { return f.pct; });
+  function idx(k) { for (var i = 0; i < QUICK_FIELDS.length; i++) if (QUICK_FIELDS[i].k === k) return i; }
+  function anyPct() { return PCT.some(function (f) { return data[f.k].trim() !== ""; }); }
+  function applySplit() {
+    var kc = parseFloat(data.kcal);
+    if (!anyPct() || !(kc > 0)) return;
+    PCT.forEach(function (f) {
+      var p = parseFloat(data[f.k]);
+      var g = p > 0 ? String(Math.round((kc * p / 100) / (f.pct === "fat" ? 9 : 4) * 10) / 10) : "";
+      data[f.pct] = g;
+      inputs[idx(f.pct)].value = g;
+    });
+  }
+  function splitNote() {
+    var el = document.getElementById("split");
+    if (!el) return;
+    if (!anyPct()) { el.textContent = "e.g. bread ≈ 90% carbs, 10% fat"; el.className = "calc"; return; }
+    var sum = PCT.reduce(function (a, f) { return a + (parseFloat(data[f.k]) || 0); }, 0);
+    var kc = parseFloat(data.kcal);
+    var off = Math.round(sum) !== 100;
+    el.className = "calc" + (off || !(kc > 0) ? " warn" : "");
+    el.textContent = !(kc > 0) ? "enter calories first to estimate grams"
+      : "total " + Math.round(sum) + "%" + (off ? " — should add to 100%" : "") +
+        " → C" + fmtG(+data.carbs || 0) + " P" + fmtG(+data.protein || 0) + " F" + fmtG(+data.fat || 0) + " g";
+  }
+  function onInput(f) {
+    sync();
+    if (f.pct || f.k === "kcal") applySplit();
+    calc(); splitNote();
+  }
   function kcal() {
     return data.kcal.trim() !== "" ? Math.round(parseFloat(data.kcal) || 0) : Store.kcalFromMacros(data.carbs, data.protein, data.fat);
   }
@@ -435,14 +470,15 @@ function QuickView(entry) {
         var inp;
         if (f.num) inp = NumBox(data[f.k], f.ph);
         else { inp = document.createElement("input"); inp.type = "text"; inp.value = data[f.k]; inp.placeholder = f.ph || ""; }
-        inp.addEventListener("input", function () { sync(); calc(); });
+        inp.addEventListener("input", function () { onInput(f); });
         row.appendChild(inp);
         if (f.k === "kcal") { var c = document.createElement("div"); c.id = "calc"; c.className = "calc"; row.appendChild(c); }
+        if (f.split) { var sp = document.createElement("div"); sp.id = "split"; row.appendChild(sp); }
         form.appendChild(row);
         return inp;
       });
       el.appendChild(form);
-      calc();
+      calc(); splitNote();
       setTimeout(function () { focusField(focus); }, 50);
     },
     key: function (e) {
@@ -747,7 +783,7 @@ function HistoryView() {
 
 function DiagView() {
   var lines = [
-    "version: " + "1.5",
+    "version: " + "1.6",
     "scan speed: " + (Scanner.speed() || "n/a"),
     "EAN decoder: " + !!window.EAN,
     "last camera: " + (Scanner.info() || "not used yet"),

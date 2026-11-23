@@ -1,13 +1,13 @@
 {
   "name": "CalTrack",
-  "version": "1.5",
+  "version": "1.6",
   "package_path": "https://tannerstratford.github.io/kaios-caltrack/Apps-directory/CalTrack/application.zip",
-  "packaged_size": 140396,
-  "size": 140396,
+  "packaged_size": 140991,
+  "size": 140991,
   "type": "web",
   "b2g_features": {
     "focus_color": "#2f6fed",
-    "version": "1.5",
+    "version": "1.6",
     "origin": "caltrack",
     "permissions": {
       "camera": {},
