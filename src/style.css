@@ -92,3 +92,5 @@ i.c { background:var(--c); } i.p { background:var(--p); } i.f { background:var(-
 .search input { width:100%; padding:7px 8px; font-size:15px; border:1px solid var(--accent); border-radius:6px;
   background:#04121a; color:var(--text); }
 .calc.warn { color:var(--c); }
+.field textarea { width:100%; padding:7px 8px; font:15px "Open Sans", Arial, sans-serif; border:1px solid var(--line); border-radius:6px; background:#04121a; color:var(--text); resize:none; }
+.field.sel textarea { border-color:var(--accent); }

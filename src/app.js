@@ -210,6 +210,17 @@ function NumBox(value, placeholder) {
   return el;
 }
 
+// Text field that asks the phone keyboard for word prediction (T9) by default.
+// KaiOS doesn't document this; "latin-prose" is the Firefox OS keyboard hint
+// for "prose, show suggestions", set both as standard and x- attribute.
+// Number fields are NumBox divs, so the keyboard never sees them.
+function predictive(inp) {
+  inp.setAttribute("inputmode", "latin-prose");
+  inp.setAttribute("x-inputmode", "latin-prose");
+  return inp;
+}
+function textInput() { var i = document.createElement("input"); i.type = "text"; return predictive(i); }
+
 // Single-field prompt. opts: {numeric, preview(value) -> text, okLabel}
 function PromptView(title, hint, value, onSubmit, opts) {
   opts = opts || {};
@@ -222,7 +233,7 @@ function PromptView(title, hint, value, onSubmit, opts) {
         (opts.numeric ? '<div class="hint">* = decimal point</div>' : "") + "</div>";
       el.querySelector("p").textContent = hint;
       var slot = el.querySelector(".slot");
-      input = opts.numeric ? NumBox(value) : document.createElement("input");
+      input = opts.numeric ? NumBox(value) : textInput();
       slot.parentNode.replaceChild(input, slot);
       if (!opts.numeric) input.value = value == null ? "" : value;
       var prev = el.querySelector(".preview");
@@ -336,7 +347,7 @@ function AddView() {
     render: function (el) {
       // Rebuilt on every show (e.g. coming back from editing a food), query kept.
       el.innerHTML = '<div class="search"><input type="text" placeholder="Search foods…"></div><ul class="list"></ul>';
-      input = el.querySelector("input"); ul = el.querySelector("ul");
+      input = predictive(el.querySelector("input")); ul = el.querySelector("ul");
       input.value = q;
       build();
       if (s >= items.length || !items[s] || items[s].head) firstSel();
@@ -469,7 +480,7 @@ function QuickView(entry) {
         var lab = document.createElement("span"); lab.textContent = f.label; row.appendChild(lab);
         var inp;
         if (f.num) inp = NumBox(data[f.k], f.ph);
-        else { inp = document.createElement("input"); inp.type = "text"; inp.value = data[f.k]; inp.placeholder = f.ph || ""; }
+        else { inp = textInput(); inp.value = data[f.k]; inp.placeholder = f.ph || ""; }
         inp.addEventListener("input", function () { onInput(f); });
         row.appendChild(inp);
         if (f.k === "kcal") { var c = document.createElement("div"); c.id = "calc"; c.className = "calc"; row.appendChild(c); }
@@ -555,7 +566,7 @@ function FoodForm(food, onSaved, startAt) {
         var lab = document.createElement("span"); lab.textContent = f.label; row.appendChild(lab);
         var inp;
         if (f.num) inp = NumBox(data[f.k], f.ph);
-        else { inp = document.createElement("input"); inp.type = "text"; inp.value = data[f.k]; inp.placeholder = f.ph || ""; }
+        else { inp = textInput(); inp.value = data[f.k]; inp.placeholder = f.ph || ""; }
         inp.addEventListener("input", function () { sync(); calc(); });
         row.appendChild(inp);
         if (f.k === "kcal") { var c = document.createElement("div"); c.id = "calc"; c.className = "calc"; row.appendChild(c); }
@@ -781,9 +792,57 @@ function HistoryView() {
   return ListView("History", items, { center: "Open" });
 }
 
+// Which field hint makes this phone's keyboard start in predictive mode?
+// Each box differs only in its attributes; type in each and compare.
+var IME_TESTS = [
+  ["1 plain", {}],
+  ["2 inputmode=latin-prose", { inputmode: "latin-prose" }],
+  ["3 x-inputmode=latin-prose", { "x-inputmode": "latin-prose" }],
+  ["4 inputmode=latin", { inputmode: "latin", "x-inputmode": "latin" }],
+  ["5 textarea + latin-prose", { inputmode: "latin-prose", "x-inputmode": "latin-prose", textarea: true }],
+  ["6 autocorrect+spellcheck", { autocorrect: "on", spellcheck: "true", autocomplete: "on" }],
+];
+function ImeTestView() {
+  var inputs = [], focus = 0;
+  function go(i) {
+    focus = Math.max(0, Math.min(inputs.length - 1, i));
+    inputs.forEach(function (x, j) { x.parentNode.classList.toggle("sel", j === focus); });
+    inputs[focus].parentNode.scrollIntoView({ block: "nearest" });
+    inputs[focus].focus();
+  }
+  return {
+    title: function () { return "Keyboard test"; },
+    render: function (el) {
+      softkeys("", "", "Back");
+      var form = document.createElement("div"); form.className = "fields";
+      form.innerHTML = '<div class="hint">Type a word in each. Which ones start in predictive mode? Up/Down = next box.</div>';
+      inputs = IME_TESTS.map(function (t) {
+        var row = document.createElement("label"); row.className = "field";
+        var lab = document.createElement("span"); lab.textContent = t[0]; row.appendChild(lab);
+        var inp = document.createElement(t[1].textarea ? "textarea" : "input");
+        if (!t[1].textarea) inp.type = "text"; else inp.rows = 1;
+        Object.keys(t[1]).forEach(function (a) { if (a !== "textarea") inp.setAttribute(a, t[1][a]); });
+        row.appendChild(inp); form.appendChild(row);
+        return inp;
+      });
+      el.appendChild(form);
+      setTimeout(function () { go(focus); }, 50);
+    },
+    key: function (e) {
+      switch (e.key) {
+        case "ArrowDown": go(focus + 1); return;
+        case "ArrowUp": go(focus - 1); return;
+        case "SoftRight": return pop();
+        case "Backspace": if (!inputs[focus].value) return pop(); return false;
+        default: return false;
+      }
+    },
+  };
+}
+
 function DiagView() {
   var lines = [
-    "version: " + "1.6",
+    "version: " + "1.7",
     "scan speed: " + (Scanner.speed() || "n/a"),
     "EAN decoder: " + !!window.EAN,
     "last camera: " + (Scanner.info() || "not used yet"),
@@ -793,7 +852,9 @@ function DiagView() {
     "foods: " + Store.foodList().length,
     "storage used: " + Math.round((JSON.stringify(localStorage).length) / 1024) + " KB",
   ];
-  return ListView("Diagnostics", lines.map(function (l) { return { label: l }; }));
+  var items = lines.map(function (l) { return { label: l }; });
+  items.unshift({ label: "Keyboard test", sub: "which field type starts predictive?", run: function () { push(ImeTestView()); } });
+  return ListView("Diagnostics", items);
 }
 
 // ---------------------------------------------------------------- start
