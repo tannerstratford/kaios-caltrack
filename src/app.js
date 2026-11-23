@@ -795,12 +795,14 @@ function HistoryView() {
 // Which field hint makes this phone's keyboard start in predictive mode?
 // Each box differs only in its attributes; type in each and compare.
 var IME_TESTS = [
-  ["1 plain", {}],
+  ["1 plain text", {}],
   ["2 inputmode=latin-prose", { inputmode: "latin-prose" }],
   ["3 x-inputmode=latin-prose", { "x-inputmode": "latin-prose" }],
   ["4 inputmode=latin", { inputmode: "latin", "x-inputmode": "latin" }],
-  ["5 textarea + latin-prose", { inputmode: "latin-prose", "x-inputmode": "latin-prose", textarea: true }],
-  ["6 autocorrect+spellcheck", { autocorrect: "on", spellcheck: "true", autocomplete: "on" }],
+  ["5 textarea (like Messages)", { textarea: true }],
+  ["6 textarea + latin-prose", { inputmode: "latin-prose", "x-inputmode": "latin-prose", textarea: true }],
+  ["7 type=search", { type: "search" }],
+  ["8 lang=en + autocorrect", { lang: "en", autocorrect: "on", spellcheck: "true", autocomplete: "on" }],
 ];
 function ImeTestView() {
   var inputs = [], focus = 0;
@@ -820,8 +822,8 @@ function ImeTestView() {
         var row = document.createElement("label"); row.className = "field";
         var lab = document.createElement("span"); lab.textContent = t[0]; row.appendChild(lab);
         var inp = document.createElement(t[1].textarea ? "textarea" : "input");
-        if (!t[1].textarea) inp.type = "text"; else inp.rows = 1;
-        Object.keys(t[1]).forEach(function (a) { if (a !== "textarea") inp.setAttribute(a, t[1][a]); });
+        if (!t[1].textarea) inp.type = t[1].type || "text"; else inp.rows = 1;
+        Object.keys(t[1]).forEach(function (a) { if (a !== "textarea" && a !== "type") inp.setAttribute(a, t[1][a]); });
         row.appendChild(inp); form.appendChild(row);
         return inp;
       });
